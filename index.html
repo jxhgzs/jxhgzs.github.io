@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>尺规作图工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px;
+        }
+        #canvas {
+            border: 1px solid #000;
+            background-color: #f8f8f8;
+            cursor: crosshair;
+            margin-top: 20px;
+        }
+        .controls {
+            margin-bottom: 10px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+        }
+        .control-group {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 10px;
+            background-color: #f5f5f5;
+        }
+        .control-group h3 {
+            margin-top: 0;
+            margin-bottom: 10px;
+            font-size: 16px;
+            text-align: center;
+        }
+        button {
+            padding: 8px 15px;
+            margin: 0 5px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button.active {
+            background-color: #2E7D32;
+            box-shadow: 0 0 5px rgba(0,0,0,0.5);
+        }
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+            color: #555;
+        }
+        .help {
+            margin-top: 20px;
+            max-width: 800px;
+            text-align: left;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            background-color: #fafafa;
+        }
+        .help h3 {
+            margin-top: 0;
+        }
+        .help ul {
+            padding-left: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>尺规作图工具</h1>
+    <div class="controls">
+        <div class="control-group">
+            <h3>基本操作</h3>
+            <button id="pointBtn">添加点</button>
+            <button id="lineBtn">画直线</button>
+            <button id="circleBtn">画圆</button>
+            <button id="clearBtn">清除画布</button>
+        </div>
+        <div class="control-group">
+            <h3>高级操作</h3>
+            <button id="intersectBtn">标记交点</button>
+            <button id="midpointBtn">中点</button>
+            <button id="perpendBtn">垂线</button>
+        </div>
+    </div>
+    <div class="status" id="status">当前模式：无</div>
+    <canvas id="canvas" width="800" height="500"></canvas>
+    
+    <div class="help">
+        <h3>使用帮助</h3>
+        <ul>
+            <li><strong>添加点</strong>：点击画布添加新点</li>
+            <li><strong>画直线</strong>：选择两个点作为起点和终点</li>
+            <li><strong>画圆</strong>：先选择圆心，再选择半径点</li>
+            <li><strong>标记交点</strong>：自动检测并标记直线与直线、直线与圆、圆与圆的交点</li>
+            <li><strong>中点</strong>：选择两点，标记它们的中点</li>
+            <li><strong>垂线</strong>：先选择一条线，再选择一点，绘制过该点的垂线</li>
+        </ul>
+    </div>
+
+    <script>
+        // 获取页面元素
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const pointBtn = document.getElementById('pointBtn');
+        const lineBtn = document.getElementById('lineBtn');
+        const circleBtn = document.getElementById('circleBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const intersectBtn = document.getElementById('intersectBtn');
+        const midpointBtn = document.getElementById('midpointBtn');
+        const perpendBtn = document.getElementById('perpendBtn');
+        const status = document.getElementById('status');
+        
+        // 初始化变量
+        let mode = 'none'; // 'point', 'line', 'circle', 'intersect', 'midpoint', 'perpend', 'none'
+        let points = []; // 存储所有点的坐标
+        let lines = []; // 存储所有线
+        let circles = []; // 存储所有圆
+        let selectedPoints = []; // 存储被选中的点
+        let selectedLines = []; // 存储被选中的线
+        let pointRadius = 5; // 点的半径
+        let lastPointId = 0; // 记录最后一个点的ID
+        
+        // 设置按钮事件监听器
+        pointBtn.addEventListener('click', () => setMode('point'));
+        lineBtn.addEventListener('click', () => setMode('line'));
+        circleBtn.addEventListener('click', () => setMode('circle'));
+        clearBtn.addEventListener('click', clearCanvas);
+        intersectBtn.addEventListener('click', () => setMode('intersect'));
+        midpointBtn.addEventListener('click', () => setMode('midpoint'));
+        perpendBtn.addEventListener('click', () => setMode('perpend'));
+        canvas.addEventListener('click', handleCanvasClick);
+        
+        // 设置当前模式
+        function setMode(newMode) {
+            mode = newMode;
+            updateButtonStatus();
+            selectedPoints = [];
+            selectedLines = [];
+            
+            switch(mode) {
+                case 'point':
+                    status.textContent = '当前模式：添加点（点击画布添加点）';
+                    break;
+                case 'line':
+                    status.textContent = '当前模式：画直线（依次点击两个点连接它们）';
+                    break;
+                case 'circle':
+                    status.textContent = '当前模式：画圆（先选择圆心，再选择半径点）';
+                    break;
+                case 'intersect':
+                    status.textContent = '当前模式：标记交点（系统自动标记所有可见交点）';
+                    findAllIntersections();
+                    break;
+                case 'midpoint':
+                    status.textContent = '当前模式：中点（依次选择两点，系统标记其中点）';
+                    break;
+                case 'perpend':
+                    status.textContent = '当前模式：垂线（先选择一条直线，再选择一点，绘制垂线）';
+                    break;
+                default:
+                    status.textContent = '当前模式：无';
+                    break;
+            }
+        }
+        
+        // 更新按钮状态
+        function updateButtonStatus() {
+            const allButtons = [pointBtn, lineBtn, circleBtn, intersectBtn, midpointBtn, perpendBtn];
+            allButtons.forEach(btn => btn.classList.remove('active'));
+            
+            switch(mode) {
+                case 'point': pointBtn.classList.add('active'); break;
+                case 'line': lineBtn.classList.add('active'); break;
+                case 'circle': circleBtn.classList.add('active'); break;
+                case 'intersect': intersectBtn.classList.add('active'); break;
+                case 'midpoint': midpointBtn.classList.add('active'); break;
+                case 'perpend': perpendBtn.classList.add('active'); break;
+            }
+        }
+        
+        // 处理画布点击事件
+        function handleCanvasClick(e) {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            const clickedPointIndex = findPointAt(x, y);
+            
+            switch(mode) {
+                case 'point':
+                    // 添加新点
+                    addPoint(x, y);
+                    redraw();
+                    break;
+                
+                case 'line':
+                    // 画线模式
+                    if (clickedPointIndex !== -1) {
+                        handleLineMode(clickedPointIndex);
+                    }
+                    break;
+                
+                case 'circle':
+                    // 画圆模式
+                    if (clickedPointIndex !== -1) {
+                        handleCircleMode(clickedPointIndex);
+                    }
+                    break;
+                    
+                case 'midpoint':
+                    // 中点模式
+                    if (clickedPointIndex !== -1) {
+                        handleMidpointMode(clickedPointIndex);
+                    }
+                    break;
+                    
+                case 'perpend':
+                    // 垂线模式
+                    if (selectedLines.length === 0) {
+                        // 选择线
+                        const selectedLineIndex = findLineNear(x, y);
+                        if (selectedLineIndex !== -1) {
+                            selectedLines.push(lines[selectedLineIndex]);
+                            status.textContent = '已选择直线，现在请选择一个点作为垂线的起点';
+                            redraw();
+                            highlightLine(lines[selectedLineIndex]);
+                        }
+                    } else if (clickedPointIndex !== -1) {
+                        // 已选择线，现在选择点
+                        drawPerpendicularLine(selectedLines[0], points[clickedPointIndex]);
+                        selectedLines = [];
+                        redraw();
+                    }
+                    break;
+            }
+        }
+        
+        // 添加点
+        function addPoint(x, y, label = '') {
+            lastPointId++;
+            const pointLabel = label || lastPointId.toString();
+            points.push({x, y, id: lastPointId, label: pointLabel});
+            return points[points.length - 1];
+        }
+        
+        // 处理线模式的点击
+        function handleLineMode(clickedPointIndex) {
+            selectedPoints.push(points[clickedPointIndex]);
+            highlightPoint(points[clickedPointIndex]);
+            
+            if (selectedPoints.length === 2) {
+                addLine(selectedPoints[0], selectedPoints[1]);
+                selectedPoints = [];
+                redraw();
+            }
+        }
+        
+        // 处理圆模式的点击
+        function handleCircleMode(clickedPointIndex) {
+            selectedPoints.push(points[clickedPointIndex]);
+            highlightPoint(points[clickedPointIndex]);
+            
+            if (selectedPoints.length === 2) {
+                const center = selectedPoints[0];
+                const radiusPoint = selectedPoints[1];
+                const radius = Math.sqrt(
+                    Math.pow(radiusPoint.x - center.x, 2) + 
+                    Math.pow(radiusPoint.y - center.y, 2)
+                );
+                
+                addCircle(center, radius);
+                selectedPoints = [];
+                redraw();
+            }
+        }
+        
+        // 处理中点模式的点击
+        function handleMidpointMode(clickedPointIndex) {
+            selectedPoints.push(points[clickedPointIndex]);
+            highlightPoint(points[clickedPointIndex]);
+            
+            if (selectedPoints.length === 2) {
+                const p1 = selectedPoints[0];
+                const p2 = selectedPoints[1];
+                const midX = (p1.x + p2.x) / 2;
+                const midY = (p1.y + p2.y) / 2;
+                
+                addPoint(midX, midY, `M${lastPointId+1}`);
+                selectedPoints = [];
+                redraw();
+            }
+        }
+        
+        // 查找点击位置是否有点存在
+        function findPointAt(x, y) {
+            for (let i = 0; i < points.length; i++) {
+                const point = points[i];
+                const distance = Math.sqrt(Math.pow(point.x - x, 2) + Math.pow(point.y - y, 2));
+                
+                if (distance <= pointRadius) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        
+        // 查找点击位置附近的线
+        function findLineNear(x, y, threshold = 5) {
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const distance = distanceToLine(x, y, line.p1, line.p2);
+                if (distance <= threshold) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+        
+        // 计算点到线的距离
+        function distanceToLine(x, y, lineP1, lineP2) {
+            const A = x - lineP1.x;
+            const B = y - lineP1.y;
+            const C = lineP2.x - lineP1.x;
+            const D = lineP2.y - lineP1.y;
+            
+            const dot = A * C + B * D;
+            const lenSq = C * C + D * D;
+            let param = -1;
+            
+            if (lenSq !== 0) {
+                param = dot / lenSq;
+            }
+            
+            let xx, yy;
+            
+            if (param < 0) {
+                xx = lineP1.x;
+                yy = lineP1.y;
+            } else if (param > 1) {
+                xx = lineP2.x;
+                yy = lineP2.y;
+            } else {
+                xx = lineP1.x + param * C;
+                yy = lineP1.y + param * D;
+            }
+            
+            const dx = x - xx;
+            const dy = y - yy;
+            
+            return Math.sqrt(dx * dx + dy * dy);
+        }
+        
+        // 添加线
+        function addLine(p1, p2) {
+            lines.push({p1, p2});
+            return lines[lines.length - 1];
+        }
+        
+        // 添加圆
+        function addCircle(center, radius) {
+            circles.push({center, radius});
+            return circles[circles.length - 1];
+        }
+        
+        // 绘制垂线
+        function drawPerpendicularLine(line, point) {
+            // 计算原始直线的斜率
+            const dx = line.p2.x - line.p1.x;
+            const dy = line.p2.y - line.p1.y;
+            
+            // 垂线斜率是原始直线斜率的负倒数
+            // 如果原始直线是水平的，垂线是垂直的
+            let perpX1, perpY1, perpX2, perpY2;
+            
+            if (Math.abs(dx) < 0.0001) { // 原始线是垂直的
+                perpX1 = point.x - 100;
+                perpY1 = point.y;
+                perpX2 = point.x + 100;
+                perpY2 = point.y;
+            } else if (Math.abs(dy) < 0.0001) { // 原始线是水平的
+                perpX1 = point.x;
+                perpY1 = point.y - 100;
+                perpX2 = point.x;
+                perpY2 = point.y + 100;
+            } else {
+                // 计算原始直线斜率
+                const slope = dy / dx;
+                // 计算垂直斜率
+                const perpSlope = -1 / slope;
+                
+                // 生成垂线的两点
+                perpX1 = point.x - 100;
+                perpY1 = point.y + perpSlope * (perpX1 - point.x);
+                perpX2 = point.x + 100;
+                perpY2 = point.y + perpSlope * (perpX2 - point.x);
+            }
+            
+            // 创建垂线端点
+            const perpP1 = addPoint(perpX1, perpY1, '');
+            const perpP2 = addPoint(perpX2, perpY2, '');
+            
+            // 将新点设置为不可见
+            perpP1.visible = false;
+            perpP2.visible = false;
+            
+            // 添加垂线
+            addLine(perpP1, perpP2);
+        }
+        
+        // 高亮显示点
+        function highlightPoint(point) {
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, pointRadius + 3, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
+            ctx.fill();
+        }
+        
+        // 高亮显示线
+        function highlightLine(line) {
+            ctx.beginPath();
+            ctx.moveTo(line.p1.x, line.p1.y);
+            ctx.lineTo(line.p2.x, line.p2.y);
+            ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+            ctx.lineWidth = 4;
+            ctx.stroke();
+        }
+        
+        // 重绘所有内容
+        function redraw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // 绘制所有线
+            drawLines();
+            
+            // 绘制所有圆
+            drawCircles();
+            
+            // 绘制所有点
+            drawPoints();
+        }
+        
+        // 绘制点
+        function drawPoints() {
+            points.forEach(point => {
+                if (point.visible !== false) { // 跳过不可见的点
+                    ctx.beginPath();
+                    ctx.arc(point.x, point.y, pointRadius, 0, Math.PI * 2);
+                    ctx.fillStyle = '#3498db';
+                    ctx.fill();
+                    ctx.strokeStyle = 'black';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                    
+                    // 绘制点的标签
+                    ctx.font = '12px Arial';
+                    ctx.fillStyle = 'black';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(point.label, point.x, point.y - 10);
+                }
+            });
+        }
+        
+        // 绘制所有线
+        function drawLines() {
+            ctx.strokeStyle = '#2c3e50';
+            ctx.lineWidth = 2;
+            
+            lines.forEach(line => {
+                ctx.beginPath();
+                // 绘制扩展的线条以表示无限直线
+                const dx = line.p2.x - line.p1.x;
+                const dy = line.p2.y - line.p1.y;
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const unitX = dx / length;
+                const unitY = dy / length;
+                
+                // 绘制延长的线条
+                const extendLength = 1000; // 延长的长度
+                const startX = line.p1.x - unitX * extendLength;
+                const startY = line.p1.y - unitY * extendLength;
+                const endX = line.p2.x + unitX * extendLength;
+                const endY = line.p2.y + unitY * extendLength;
+                
+                ctx.moveTo(startX, startY);
+                ctx.lineTo(endX, endY);
+                ctx.stroke();
+            });
+        }
+        
+        // 绘制所有圆
+        function drawCircles() {
+            ctx.strokeStyle = '#8e44ad';
+            ctx.lineWidth = 2;
+            
+            circles.forEach(circle => {
+                ctx.beginPath();
+                ctx.arc(circle.center.x, circle.center.y, circle.radius, 0, Math.PI * 2);
+                ctx.stroke();
+            });
+        }
+        
+        // 查找所有交点
+        function findAllIntersections() {
+            // 线与线的交点
+            for (let i = 0; i < lines.length; i++) {
+                for (let j = i + 1; j < lines.length; j++) {
+                    const intersection = findLineLineIntersection(lines[i], lines[j]);
+                    if (intersection) {
+                        addPoint(intersection.x, intersection.y, `I${lastPointId+1}`);
+                    }
+                }
+            }
+            
+            // 线与圆的交点
+            for (let i = 0; i < lines.length; i++) {
+                for (let j = 0; j < circles.length; j++) {
+                    const intersections = findLineCircleIntersections(lines[i], circles[j]);
+                    intersections.forEach(intersection => {
+                        addPoint(intersection.x, intersection.y, `I${lastPointId+1}`);
+                    });
+                }
+            }
+            
+            // 圆与圆的交点
+            for (let i = 0; i < circles.length; i++) {
+                for (let j = i + 1; j < circles.length; j++) {
+                    const intersections = findCircleCircleIntersections(circles[i], circles[j]);
+                    intersections.forEach(intersection => {
+                        addPoint(intersection.x, intersection.y, `I${lastPointId+1}`);
+                    });
+                }
+            }
+            
+            redraw();
+        }
+        
+        // 计算两条线的交点
+        function findLineLineIntersection(line1, line2) {
+            const x1 = line1.p1.x;
+            const y1 = line1.p1.y;
+            const x2 = line1.p2.x;
+            const y2 = line1.p2.y;
+            const x3 = line2.p1.x;
+            const y3 = line2.p1.y;
+            const x4 = line2.p2.x;
+            const y4 = line2.p2.y;
+            
+            const denominator = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1);
+            if (Math.abs(denominator) < 0.0001) return null; // 平行线
+            
+            const ua = ((x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)) / denominator;
+            
+            const x = x1 + ua * (x2 - x1);
+            const y = y1 + ua * (y2 - y1);
+            
+            return {x, y};
+        }
+        
+        // 计算线与圆的交点
+        function findLineCircleIntersections(line, circle) {
+            // 将直线视为参数方程：P = P1 + t(P2 - P1)
+            const x1 = line.p1.x;
+            const y1 = line.p1.y;
+            const x2 = line.p2.x;
+            const y2 = line.p2.y;
+            
+            const cx = circle.center.x;
+            const cy = circle.center.y;
+            const r = circle.radius;
+            
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            
+            // 求解二次方程：at^2 + bt + c = 0
+            const a = dx * dx + dy * dy;
+            const b = 2 * (dx * (x1 - cx) + dy * (y1 - cy));
+            const c = (x1 - cx) * (x1 - cx) + (y1 - cy) * (y1 - cy) - r * r;
+            
+            const discriminant = b * b - 4 * a * c;
+            
+            if (discriminant < 0) {
+                return []; // 没有实数解，即没有交点
+            }
+            
+            const intersections = [];
+            
+            const sqrtDiscriminant = Math.sqrt(discriminant);
+            const t1 = (-b + sqrtDiscriminant) / (2 * a);
+            const t2 = (-b - sqrtDiscriminant) / (2 * a);
+            
+            // 计算交点坐标
+            intersections.push({
+                x: x1 + t1 * dx,
+                y: y1 + t1 * dy
+            });
+            
+            if (discriminant > 0) {
+                // 如果判别式大于0，有两个交点
+                intersections.push({
+                    x: x1 + t2 * dx,
+                    y: y1 + t2 * dy
+                });
+            }
+            
+            return intersections;
+        }
+        
+        // 计算两个圆的交点
+        function findCircleCircleIntersections(circle1, circle2) {
+            const x1 = circle1.center.x;
+            const y1 = circle1.center.y;
+            const r1 = circle1.radius;
+            const x2 = circle2.center.x;
+            const y2 = circle2.center.y;
+            const r2 = circle2.radius;
+            
+            const dx = x2 - x1;
+            const dy = y2 - y1;
+            const d = Math.sqrt(dx * dx + dy * dy);
+            
+            // 检查圆是否不相交或者一个包含另一个
+            if (d > r1 + r2 || d < Math.abs(r1 - r2)) {
+                return []; // 没有交点
+            }
+            
+            // 如果圆相切，则只有一个交点
+            if (Math.abs(d - (r1 + r2)) < 0.0001 || Math.abs(d - Math.abs(r1 - r2)) < 0.0001) {
+                const x = x1 + (dx * r1) / d;
+                const y = y1 + (dy * r1) / d;
+                return [{x, y}];
+            }
+            
+            // 计算两个交点
+            const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+            const h = Math.sqrt(r1 * r1 - a * a);
+            const x3 = x1 + (a * dx) / d;
+            const y3 = y1 + (a * dy) / d;
+            
+            const offsetX = (h * dy) / d;
+            const offsetY = (h * dx) / d;
+            
+            const intersection1 = {
+                x: x3 + offsetX,
+                y: y3 - offsetY
+            };
+            
+            const intersection2 = {
+                x: x3 - offsetX,
+                y: y3 + offsetY
+            };
+            
+            return [intersection1, intersection2];
+        }
+        
+        // 清除画布
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            points = [];
+            lines = [];
+            circles = [];
+            selectedPoints = [];
+            selectedLines = [];
+            lastPointId = 0;
+            setMode('none');
+        }
+        
+        // 初始化
+        setMode('none');
+    </script>
+</body>
+</html>
